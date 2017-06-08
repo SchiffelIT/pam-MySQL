@@ -379,7 +379,7 @@ PAM_EXTERN int pam_sm_close_session(pam_handle_t *pamh, int flags, int argc,
     const char **argv);
 /* }}} */
 
-/* {{{ static prototypes */ 
+/* {{{ static prototypes */
 static void pam_mysql_cleanup_hdlr(pam_handle_t *pamh, void * voiddata, int status);
 
 /* {{{ pam_mysql methods */
@@ -657,6 +657,7 @@ static char *pam_mysql_sha1_data(const unsigned char *d, unsigned int sz, char *
   return md;
 }
 
+#define HAVE_PAM_MYSQL_SHA512_DATA
 static char *pam_mysql_sha512_data(const unsigned char *d, unsigned int sz, char *md)
 {
   size_t i, j;
@@ -958,6 +959,10 @@ static pam_mysql_err_t pam_mysql_crypt_opt_getter(void *val, const char **pretva
       *pretval = "joomla15";
       break;
 
+    case 7:
+      *pretval = "sha512";
+      break;
+
     default:
       *pretval = NULL;
   }
@@ -1001,6 +1006,11 @@ static pam_mysql_err_t pam_mysql_crypt_opt_setter(void *val, const char *newval_
 
   if (strcmp(newval_str, "6") == 0 || strcasecmp(newval_str, "joomla15") == 0) {
     *(int *)val = 6;
+    return PAM_MYSQL_ERR_SUCCESS;
+  }
+
+  if (strcmp(newval_str, "7") == 0 || strcasecmp(newval_str, "sha512") == 0) {
+    *(int *)val = 7;
     return PAM_MYSQL_ERR_SUCCESS;
   }
 
@@ -1116,7 +1126,7 @@ static pam_mysql_err_t pam_mysql_str_reserve(pam_mysql_str_t *str, size_t len)
       new_size *= 2;
       if (cv > new_size) {
         syslog(LOG_AUTHPRIV | LOG_CRIT, PAM_MYSQL_LOG_PREFIX "allocation failure at " __FILE__ ":%d", __LINE__);
-        return PAM_MYSQL_ERR_ALLOC;    
+        return PAM_MYSQL_ERR_ALLOC;
       }
       cv = new_size;
     } while (new_size < len_req);
@@ -1124,7 +1134,7 @@ static pam_mysql_err_t pam_mysql_str_reserve(pam_mysql_str_t *str, size_t len)
     if (str->mangle) {
       if (NULL == (new_buf = xcalloc(new_size, sizeof(char)))) {
         syslog(LOG_AUTHPRIV | LOG_CRIT, PAM_MYSQL_LOG_PREFIX "allocation failure at " __FILE__ ":%d", __LINE__);
-        return PAM_MYSQL_ERR_ALLOC;    
+        return PAM_MYSQL_ERR_ALLOC;
       }
 
       memcpy(new_buf, str->p, str->len);
@@ -1136,12 +1146,12 @@ static pam_mysql_err_t pam_mysql_str_reserve(pam_mysql_str_t *str, size_t len)
       if (str->alloc_size == 0) {
         if (NULL == (new_buf = xcalloc(new_size, sizeof(char)))) {
           syslog(LOG_AUTHPRIV | LOG_CRIT, PAM_MYSQL_LOG_PREFIX "allocation failure at " __FILE__ ":%d", __LINE__);
-          return PAM_MYSQL_ERR_ALLOC;    
+          return PAM_MYSQL_ERR_ALLOC;
         }
       } else {
         if (NULL == (new_buf = xrealloc(str->p, new_size, sizeof(char)))) {
           syslog(LOG_AUTHPRIV | LOG_CRIT, PAM_MYSQL_LOG_PREFIX "allocation failure at " __FILE__ ":%d", __LINE__);
-          return PAM_MYSQL_ERR_ALLOC;    
+          return PAM_MYSQL_ERR_ALLOC;
         }
       }
     }
@@ -2164,7 +2174,7 @@ static pam_mysql_err_t pam_mysql_get_host_info(pam_mysql_ctx_t *ctx,
       case AF_INET:
         if (NULL == (retval = xcalloc(INET_ADDRSTRLEN, sizeof(char)))) {
           syslog(LOG_AUTHPRIV | LOG_CRIT, PAM_MYSQL_LOG_PREFIX "allocation failure at " __FILE__ ":%d", __LINE__);
-          xfree(hent);  
+          xfree(hent);
           return PAM_MYSQL_ERR_ALLOC;
         }
 
@@ -2454,7 +2464,7 @@ pam_mysql_err_t pam_mysql_parse_args(pam_mysql_ctx_t *ctx, int argc, const char 
       strnncpy(buf, sizeof(buf), name, name_len);
       syslog(LOG_AUTHPRIV | LOG_INFO, PAM_MYSQL_LOG_PREFIX "option %s is set to \"%s\"", buf, value);
     }
-  }  
+  }
 
   /* close the database in case we get new args */
   if (param_changed) {
@@ -3023,6 +3033,20 @@ static pam_mysql_err_t pam_mysql_check_passwd(pam_mysql_ctx_t *ctx,
 #endif
             } break;
 
+          case 7: {
+#ifdef HAVE_PAM_MYSQL_SHA512_DATA
+              char buf[128];
+              pam_mysql_sha512_data((unsigned char*)passwd, strlen(passwd), buf);
+              vresult = strcmp(row[0], buf);
+              {
+                char *p = buf - 1;
+                while (*(++p)) *p = '\0';
+              }
+#else
+              syslog(LOG_AUTHPRIV | LOG_ERR, PAM_MYSQL_LOG_PREFIX "non-crypt()ish SHA512 hash is not supported in this build.");
+#endif
+            }
+
           default: {
              }
         }
@@ -3063,7 +3087,7 @@ static void pam_mysql_saltify(pam_mysql_ctx_t *ctx, char *salt, const char *salt
   unsigned int i = 0;
   char *q;
   unsigned int seed = 0;
-  static const char saltstr[] = 
+  static const char saltstr[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789./";
 
   if (ctx->verbose) {
@@ -3103,7 +3127,7 @@ static void pam_mysql_saltify(pam_mysql_ctx_t *ctx, char *salt, const char *salt
 
   if (ctx->md5) {
     *(q++) = '$';
-  }  
+  }
   *q = '\0';
 
   if (ctx->verbose) {
@@ -3254,6 +3278,23 @@ static pam_mysql_err_t pam_mysql_update_passwd(pam_mysql_ctx_t *ctx, const char 
 #endif
           break;
         }
+
+      case 7: {
+#ifdef HAVE_PAM_MYSQL_SHA512_DATA
+          if (NULL == (encrypted_passwd = xcalloc(128 + 1, sizeof(char)))) {
+          syslog(LOG_AUTHPRIV | LOG_CRIT, PAM_MYSQL_LOG_PREFIX "allocation failure at " __FILE__ ":%d", __LINE__);
+          err = PAM_MYSQL_ERR_ALLOC;
+          goto out;
+        }
+        pam_mysql_sha512_data((unsigned char*)new_passwd, strlen(new_passwd), encrypted_passwd);
+#else
+          syslog(LOG_AUTHPRIV | LOG_ERR, PAM_MYSQL_LOG_PREFIX "non-crypt()ish SHA512 hash is not supported in this build.");
+          err = PAM_MYSQL_ERR_NOTIMPL;
+          goto out;
+#endif
+          break;
+      }
+
       default:
         encrypted_passwd = NULL;
         break;
@@ -3497,7 +3538,7 @@ out:
 /* {{{ pam_mysql_converse()
  */
 static pam_mysql_err_t pam_mysql_converse(pam_mysql_ctx_t *ctx, char ***pretval,
-    pam_handle_t *pamh, size_t nargs, ...) 
+    pam_handle_t *pamh, size_t nargs, ...)
 {
   pam_mysql_err_t err = PAM_MYSQL_ERR_SUCCESS;
   int perr;
@@ -3652,7 +3693,7 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t * pamh, int flags,
   const char *rhost;
   char *passwd = NULL;
   pam_mysql_ctx_t *ctx = NULL;
-  char **resps = NULL; 
+  char **resps = NULL;
   int passwd_is_local = 0;
 
   switch (pam_mysql_retrieve_ctx(&ctx, pamh)) {
@@ -3704,7 +3745,7 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t * pamh, int flags,
     syslog(LOG_AUTHPRIV | LOG_ERR, PAM_MYSQL_LOG_PREFIX "no user specified.");
     retval = PAM_USER_UNKNOWN;
     goto out;
-  } 
+  }
 
   switch (pam_get_item(pamh, PAM_RHOST,
         (PAM_GET_ITEM_CONST void **)&rhost)) {
@@ -3950,7 +3991,7 @@ PAM_EXTERN int pam_sm_acct_mgmt(pam_handle_t * pamh, int flags, int argc,
     syslog(LOG_AUTHPRIV | LOG_ERR, PAM_MYSQL_LOG_PREFIX "no user specified.");
     retval = PAM_USER_UNKNOWN;
     goto out;
-  } 
+  }
 
   switch (pam_get_item(pamh, PAM_RHOST,
         (PAM_GET_ITEM_CONST void **)&rhost)) {
@@ -4220,7 +4261,7 @@ PAM_EXTERN int pam_sm_chauthtok(pam_handle_t *pamh,int flags,int argc,
           break;
 
         case PAM_NO_MODULE_DATA:
-          old_passwd = NULL; 
+          old_passwd = NULL;
           break;
 
         default:
@@ -4321,7 +4362,7 @@ PAM_EXTERN int pam_sm_chauthtok(pam_handle_t *pamh,int flags,int argc,
       break;
 
     case PAM_NO_MODULE_DATA:
-      new_passwd = NULL; 
+      new_passwd = NULL;
       break;
 
     default:
@@ -4587,7 +4628,7 @@ PAM_EXTERN int pam_sm_close_session(pam_handle_t *pamh, int flags, int argc,
     syslog(LOG_AUTHPRIV | LOG_ERR, PAM_MYSQL_LOG_PREFIX "no user specified.");
     retval = PAM_USER_UNKNOWN;
     goto out;
-  } 
+  }
 
   switch (pam_get_item(pamh, PAM_RHOST,
         (PAM_GET_ITEM_CONST void **)&rhost)) {
